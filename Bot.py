@@ -610,7 +610,7 @@ async def cmd_text(interaction: discord.Interaction, prompt: str, system: str = 
             description=f"**{interaction.user.display_name}:** {prompt}",
             color=BOT_COLOR
         )
-        embed_intro.set_author(name=f"Nov Chat - {model}")
+        embed_intro.set_author(name=f"Nov Chat - {model_name}")
         embed_intro.set_footer(text="Thread opened - just type here to keep chatting!")
         msg = await channel.send(embed=embed_intro)
 
@@ -622,7 +622,7 @@ async def cmd_text(interaction: discord.Interaction, prompt: str, system: str = 
 
         # Manda risposta nel thread
         embed_reply = discord.Embed(description=reply[:4000], color=BOT_COLOR)
-        embed_reply.set_footer(text=f"{model} - type /close to end")
+        embed_reply.set_footer(text=f"{model_name} - type /close to end")
         await thread.send(embed=embed_reply)
 
         # Salva stato thread
@@ -732,13 +732,14 @@ async def cmd_image(interaction: discord.Interaction, prompt: str, size: str = "
     try:
         async with aiohttp.ClientSession() as session:
             w, h = size.split("x")
+            seed = random.randint(1, 9999999)
             encoded = urllib.parse.quote(prompt)
-            img_url = f"https://image.pollinations.ai/prompt/{encoded}?model={model}&width={w}&height={h}&nologo=true&seed={random.randint(1,99999)}"
+            img_url = f"https://gen.pollinations.ai/image/{encoded}?model={model}&width={w}&height={h}&nologo=true&seed={seed}"
             img_bytes = await api_get_bytes(session, img_url)
 
         file  = discord.File(fp=io.BytesIO(img_bytes), filename="nov.png")
         embed = discord.Embed(color=BOT_COLOR)
-        embed.set_author(name=f"🖼️ {model} - {size}")
+        embed.set_author(name=f"🖼️ {model_name} - {size}")
         embed.set_image(url="attachment://nov.png")
         embed.set_footer(text=prompt[:100])
         await interaction.followup.send(embed=embed, file=file)
