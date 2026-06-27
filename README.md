@@ -1,8 +1,24 @@
+<div align="center">
+
+<img src="logo.png" width="120" alt="NovAI logo"/>
+
 # NovAI
 
-**AI for Discord — powered by [Pollinations AI](https://pollinations.ai)**
+**AI-powered Discord bot — text, images, audio, and video generation**
 
-Generate text, images, audio, and video directly in your Discord server using slash commands.
+[![Add to Discord](https://img.shields.io/badge/Add%20to%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.com/oauth2/authorize?client_id=1520183989200093205&permissions=8&integration_type=0&scope=bot+applications.commands)
+[![GitHub](https://img.shields.io/badge/GitHub-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Nov-AI/NovAI)
+[![Powered by Pollinations](https://img.shields.io/badge/Powered%20by-Pollinations%20AI-black?style=for-the-badge)](https://pollinations.ai)
+
+</div>
+
+---
+
+## Overview
+
+NovAI brings AI generation directly into your Discord server through slash commands. Generate text with dozens of models, create images, convert text to speech, and produce videos — all without leaving Discord.
+
+No account required to get started. Connect your Pollinations account to unlock the full model catalogue and video generation.
 
 ---
 
@@ -10,34 +26,39 @@ Generate text, images, audio, and video directly in your Discord server using sl
 
 | Command | Description |
 |---|---|
-| `/connect` | Link your Pollinations account (BYOP device flow) |
-| `/disconnect` | Remove your linked account |
-| `/text [prompt]` | Open an AI chat thread — just type inside to keep chatting |
+| `/text [prompt]` | Open a persistent AI chat thread |
 | `/image [prompt]` | Generate an image |
 | `/audio [text]` | Text to speech |
-| `/video [prompt]` | Generate a video (requires Pollen credits) |
+| `/video [prompt]` | Generate a video |
 | `/model [type] [name]` | Switch AI model with autocomplete |
-| `/models` | List available models |
-| `/remember [key] [value]` | Save info Nov will remember about you |
+| `/models` | List all available models |
+| `/connect` | Link your Pollinations account |
+| `/disconnect` | Remove your linked account |
+| `/remember [key] [value]` | Save info NovAI will remember about you |
 | `/forget` | Clear your saved memory |
 | `/info` | View your current settings |
 | `/help` | Show all commands |
 
 ---
 
-## Without an account
+## Access Tiers
 
-Basic features work without a Pollinations account:
+### Free — no account needed
+- **Text** — 12 models, GPT‑5.4 Nano by default
+- **Image** — Flux Schnell
+- **Audio** — 11 OpenAI TTS voices (Nova, Alloy, Echo, Fable, Onyx, Shimmer, Ash, Ballad, Coral, Sage, Verse)
 
-- `/text` — 12 free models (GPT-5.4 Nano default)
-- `/image` — Flux Schnell only
-- `/audio` — 11 OpenAI TTS voices (Nova, Alloy, Echo, Fable, Onyx, Shimmer, Ash, Ballad, Coral, Sage, Verse)
+### Full access — connect your Pollinations account
+- All text models — GPT‑5.5, Gemini, Claude, Grok, Mistral, Llama, DeepSeek, and more
+- All image models — Ideogram, Seedream, Grok Imagine, FLUX variants, and more
+- Video generation via Veo 3.1
+- BYOP — your Pollen credits cover your own usage
 
-Use `/connect` to unlock all models, video generation, and paid models.
+Use `/connect` to authorize via the [Pollinations device flow](https://enter.pollinations.ai/device).
 
 ---
 
-## Self-hosting
+## Self-Hosting
 
 ### Requirements
 
@@ -57,9 +78,8 @@ pip install discord.py aiohttp python-dotenv
 ### Setup
 
 1. Create a bot at [discord.com/developers](https://discord.com/developers/applications)
-2. Enable **Message Content Intent** under Bot settings
-3. Get your API key at [enter.pollinations.ai](https://enter.pollinations.ai)
-4. Create a `.env` file:
+2. Enable **Message Content Intent** under Bot → Privileged Gateway Intents
+3. Create a `.env` file in the project root:
 
 ```env
 DISCORD_TOKEN=your_discord_bot_token
@@ -71,31 +91,48 @@ DISCORD_TOKEN=your_discord_bot_token
 python Bot.py
 ```
 
-### Deploy on Railway
+---
 
-1. Push to a GitHub repo
-2. Connect repo to [Railway](https://railway.app)
-3. Add `DISCORD_TOKEN` in Railway → Variables
+## Deploy on Railway
+
+1. Push the repository to GitHub
+2. Connect the repo to [Railway](https://railway.app)
+3. Add `DISCORD_TOKEN` under **Variables**
 4. Add a `Procfile`:
 
 ```
 worker: python Bot.py
 ```
 
+Railway will auto-deploy on every push to your main branch.
+
 ---
 
 ## BYOP — Bring Your Own Pollen
 
-Nov uses the [Pollinations Device Flow](https://enter.pollinations.ai) to let users authorize with their own account. When a user runs `/connect`, Nov gives them a short code to enter at `enter.pollinations.ai/device`. Once authorized, their own Pollen credits cover their usage.
+NovAI uses the [Pollinations device flow](https://enter.pollinations.ai) to let users authorize with their own account. When a user runs `/connect`, NovAI provides a short code to enter at `enter.pollinations.ai/device`. Once authorized, their own Pollen credits cover their usage — the server owner's credits are never touched.
 
 ---
 
 ## Stack
 
-- [discord.py](https://discordpy.readthedocs.io) — Discord bot framework
-- [Pollinations AI](https://pollinations.ai) — inference backend
-- [Railway](https://railway.app) — hosting
+| | |
+|---|---|
+| [discord.py](https://discordpy.readthedocs.io) | Discord bot framework |
+| [Pollinations AI](https://pollinations.ai) | Inference backend for all generation types |
+| [aiohttp](https://docs.aiohttp.org) | Async HTTP client |
+| [Railway](https://railway.app) | Hosting |
 
 ---
 
-*Nov is not affiliated with Pollinations AI.*
+## License
+
+MIT — see [LICENSE](LICENSE) for details.
+
+---
+
+<div align="center">
+
+*NovAI is an independent project and is not affiliated with Pollinations AI.*
+
+</div>
