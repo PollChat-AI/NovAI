@@ -888,8 +888,7 @@ async def cmd_models(interaction: discord.Interaction, type: str = "all"):
         chunk_str = ""
         chunk_num = 1
         for m in models_list:
-            line = f"`{m}`
-"
+            line = f"`{m}`\n"
             if len(chunk_str) + len(line) > 1000:
                 embed.add_field(
                     name=f"{TYPE_EMOJI[t]} {t.capitalize()}" + (f" ({chunk_num})" if chunk_num > 1 else ""),
