@@ -46,7 +46,7 @@ USER_MEMORY: dict[int, dict] = {}
 CHAT_THREADS: dict[int, dict] = {}
 
 DEFAULT_MODELS = {
-    "text":  "GPT-5 Nano",
+    "text":  "GPT-5.4 Nano",
     "image": "Flux Schnell",
     "audio": "Nova",
     "video": "Veo 3.1 Fast (PAID)",
@@ -310,23 +310,36 @@ def is_free_model(name: str) -> bool:
 # Solo quelli che Pollinations eroga davvero senza autenticazione
 FREE_MODELS_NO_AUTH = {
     "text": [
+        "GPT-5.4 Nano",         # openai (default)
+        "GPT-5.4 Mini",         # openai-large
         "Mistral Small 4",      # mistral
         "Mistral Large 3",      # mistral-large
         "Meta Llama 3.3 70B",   # llama
-        "Meta Llama 4 Scout",   # llama-large
-        "DeepSeek V4 Flash (Lite)",  # deepseek
+        "Meta Llama 4 Scout",   # llama-scout
+        "DeepSeek V4 Flash (Lite)", # deepseek
         "DeepSeek V4 Pro",      # deepseek-r1
         "Qwen3 Coder 30B",      # qwen-coder
         "Phi-4",                # phi
         "MIDIjourney",          # midijourney
-        "Z.ai GLM-5.2",         # unity
-        "GPT-5 Nano",           # openai (default, GPT-4o-mini equivalent)
-        "GPT-5.4 Mini",         # openai-large (GPT-4o equivalent)
+        "Z.ai GLM-5.2",         # unity/glm
     ],
     "image": [
-        "Flux Schnell",  # flux — unico senza key
+        "Flux Schnell",         # flux — unico senza key
     ],
 }
+
+NOT_LOGGED_IN_EMBED = discord.Embed(
+    title="🔒 Account required",
+    description=(
+        "This command requires a Pollinations account.
+
+"
+        "**→ Use `/connect` to link your account for free**
+"
+        "[enter.pollinations.ai](https://enter.pollinations.ai)"
+    ),
+    color=0xED4245
+)
 
 def available_models(tipo: str, user_id: int) -> list:
     """Tutti i modelli se l'utente ha account, solo quelli pubblici altrimenti."""
@@ -688,9 +701,12 @@ async def on_message(message: discord.Message):
                         reply = await resp.text()
 
             history.append({"role": "assistant", "content": reply})
-            embed = discord.Embed(description=reply[:4000], color=BOT_COLOR)
-            embed.set_footer(text=f"{thread_data['model']} - type /close to end")
-            await message.channel.send(embed=embed)
+            # Risposta come testo normale, non embed
+            if len(reply) <= 2000:
+                await message.channel.send(reply)
+            else:
+                for chunk in [reply[i:i+2000] for i in range(0, len(reply), 2000)]:
+                    await message.channel.send(chunk)
 
         except Exception as e:
             await message.channel.send(embed=discord.Embed(title="❌ Error", description=f"`{e}`", color=0xED4245))
@@ -810,6 +826,9 @@ async def cmd_video(interaction: discord.Interaction, prompt: str):
 @app_commands.autocomplete(name=model_name_autocomplete)
 async def cmd_model(interaction: discord.Interaction, type: str, name: str):
     uid = interaction.user.id
+    if not has_personal_key(uid):
+        await interaction.response.send_message(embed=NOT_LOGGED_IN_EMBED, ephemeral=True)
+        return
     key = get_key(uid)
 
     # Modello non nella lista globale
@@ -848,20 +867,14 @@ async def cmd_model(interaction: discord.Interaction, type: str, name: str):
     app_commands.Choice(name="🎬 Video", value="video"),
 ])
 async def cmd_models(interaction: discord.Interaction, type: str = "all"):
-    uid      = interaction.user.id
-    has_key  = has_personal_key(uid)
-    tipi     = [type] if type != "all" else ["text", "image", "audio", "video"]
-
-    embed = discord.Embed(
-        title="📋 Nov - Available Models",
-        description="" if has_key else "🔓 *Free models only — `/connect` to unlock audio, video & more*",
-        color=BOT_COLOR
-    )
+    uid = interaction.user.id
+    if not has_personal_key(uid):
+        await interaction.response.send_message(embed=NOT_LOGGED_IN_EMBED, ephemeral=True)
+        return
+    tipi = [type] if type != "all" else ["text", "image", "audio", "video"]
+    embed = discord.Embed(title="📋 Nov - Available Models", color=BOT_COLOR)
     for t in tipi:
-        if not has_key and t in ("audio", "video"):
-            embed.add_field(name=f"{TYPE_EMOJI[t]} {t.capitalize()}", value="🔒 Requires account — `/connect`", inline=True)
-            continue
-        lista = "\n".join(f"`{m}`" for m in available_models(t, uid))
+        lista = "\n".join(f"`{m}`" for m in KNOWN_MODELS[t])
         embed.add_field(name=f"{TYPE_EMOJI[t]} {t.capitalize()}", value=lista or "*none*", inline=True)
     embed.set_footer(text="(PAID) = requires Pollen credits • /model to change")
     await interaction.response.send_message(embed=embed, ephemeral=True)
