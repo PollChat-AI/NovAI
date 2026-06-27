@@ -28,7 +28,7 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "")
 BASE_URL      = "https://gen.pollinations.ai/v1"
 AUTH_URL      = "https://enter.pollinations.ai/api/device"
-APP_KEY       = "pk_POwfuMPTfQYz66O5"  # Nov App Key
+APP_KEY       = "pk_yQpEnADty90tWmr0"  # Nov App Key
 BOT_NAME      = "Nov"
 BOT_COLOR     = 0x5865F2
 BOT_VERSION   = "1.1.0"
