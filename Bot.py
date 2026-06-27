@@ -306,12 +306,34 @@ def auth_headers(key) -> dict:
 def is_free_model(name: str) -> bool:
     return "(PAID)" not in name
 
+# Modelli disponibili SENZA account (endpoint pubblici, no key)
+FREE_MODELS_NO_AUTH = {
+    "text": [
+        "GPT-5.4 Nano",        # openai  (default)
+        "GPT-5.4 Mini",        # gpt-5.4-mini
+        "Mistral Small 4",     # mistral
+        "Mistral Large 3",     # mistral-large
+        "Meta Llama 3.3 70B",  # llama
+        "Meta Llama 4 Scout",  # llama-scout
+        "Gemini 3.5 Flash (PAID)",      # gemini (free via public endpoint)
+        "Gemini 3.1 Pro (PAID)",        # gemini-pro
+        "DeepSeek V4 Flash (Lite)",     # deepseek
+        "DeepSeek V4 Pro",              # deepseek-r1
+        "Qwen3 Coder 30B",              # qwen-coder
+        "Phi-4",                        # phi (non in lista originale ma compatibile)
+        "MIDIjourney",                  # midijourney
+        "Z.ai GLM-5.2",                 # unity equivalent
+    ],
+    "image": [
+        "Flux Schnell",  # flux — unico senza key
+    ],
+}
+
 def available_models(tipo: str, user_id: int) -> list:
-    """Tutti i modelli se l'utente ha account, solo FREE (pk_-compatibili) altrimenti."""
-    models = KNOWN_MODELS[tipo]
+    """Tutti i modelli se l'utente ha account, solo quelli pubblici altrimenti."""
     if has_personal_key(user_id):
-        return models
-    return [m for m in models if is_free_model(m)]
+        return KNOWN_MODELS[tipo]
+    return FREE_MODELS_NO_AUTH.get(tipo, KNOWN_MODELS[tipo])
 
 async def api_post_json(session, url, payload, key):
     async with session.post(url, headers=auth_headers(key), json=payload) as resp:
@@ -550,16 +572,25 @@ async def cmd_text(interaction: discord.Interaction, prompt: str, system: str = 
 
     try:
         async with aiohttp.ClientSession() as session:
-            payload = {
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user",   "content": prompt}
-                ],
-                "max_tokens": 1500,
-            }
-            data  = await api_post_json(session, f"{BASE_URL}/chat/completions", payload, key)
-            reply = data["choices"][0]["message"]["content"]
+            if has_personal_key(uid):
+                # Endpoint autenticato con sk_
+                payload = {
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user",   "content": prompt}
+                    ],
+                    "max_tokens": 1500,
+                }
+                data  = await api_post_json(session, f"{BASE_URL}/chat/completions", payload, key)
+                reply = data["choices"][0]["message"]["content"]
+            else:
+                # Endpoint pubblico senza key
+                encoded_prompt = urllib.parse.quote(prompt)
+                pub_url = f"https://text.pollinations.ai/{encoded_prompt}?model={model}&system={urllib.parse.quote(system)}"
+                async with session.get(pub_url) as resp:
+                    resp.raise_for_status()
+                    reply = await resp.text()
 
         # Risposta silenziosa all'interazione
         await interaction.followup.send("💬 Opening chat thread...", ephemeral=True)
@@ -587,10 +618,11 @@ async def cmd_text(interaction: discord.Interaction, prompt: str, system: str = 
 
         # Salva stato thread
         CHAT_THREADS[thread.id] = {
-            "user_id": uid,
-            "model":   model,
-            "system":  system,
-            "key":     key,
+            "user_id":  uid,
+            "model":    model,
+            "system":   system,
+            "key":      key,
+            "has_key":  has_personal_key(uid),
             "history": [
                 {"role": "system",    "content": system},
                 {"role": "user",      "content": prompt},
@@ -637,13 +669,24 @@ async def on_message(message: discord.Message):
 
         try:
             async with aiohttp.ClientSession() as session:
-                payload = {
-                    "model":    thread_data["model"],
-                    "messages": history,
-                    "max_tokens": 1500,
-                }
-                data  = await api_post_json(session, f"{BASE_URL}/chat/completions", payload, thread_data["key"])
-                reply = data["choices"][0]["message"]["content"]
+                t_key = thread_data["key"]
+                if thread_data.get("has_key"):
+                    payload = {
+                        "model":    thread_data["model"],
+                        "messages": history,
+                        "max_tokens": 1500,
+                    }
+                    data  = await api_post_json(session, f"{BASE_URL}/chat/completions", payload, t_key)
+                    reply = data["choices"][0]["message"]["content"]
+                else:
+                    # Endpoint pubblico — manda solo l'ultimo messaggio col contesto
+                    last_msg = history[-1]["content"]
+                    encoded_prompt = urllib.parse.quote(last_msg)
+                    sys_prompt = urllib.parse.quote(thread_data.get("system", ""))
+                    pub_url = f"https://text.pollinations.ai/{encoded_prompt}?model={thread_data['model']}&system={sys_prompt}"
+                    async with session.get(pub_url) as resp:
+                        resp.raise_for_status()
+                        reply = await resp.text()
 
             history.append({"role": "assistant", "content": reply})
             embed = discord.Embed(description=reply[:4000], color=BOT_COLOR)
