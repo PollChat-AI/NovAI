@@ -14,8 +14,11 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import aiohttp
+import asyncio
+import json
 import os
 import io
+import time
 import urllib.parse
 import random
 from dotenv import load_dotenv
@@ -34,7 +37,7 @@ AUTH_URL      = "https://enter.pollinations.ai/api/device"
 APP_KEY       = "pk_yQpEnADty90tWmr0"  # Nov App Key
 BOT_NAME      = "Nov"
 BOT_COLOR     = 0x5865F2
-BOT_VERSION   = "1.3.0"
+BOT_VERSION   = "2.0.0"
 
 # Chiavi per utente { user_id: "sk_..." }
 USER_KEYS: dict[int, str] = {}
@@ -667,7 +670,7 @@ async def cmd_text(interaction: discord.Interaction, prompt: str, system: str = 
         await interaction.followup.send(embed=discord.Embed(title="❌ Error", description=f"`{e}`", color=0xED4245))
 
 # ──────────────────────────────────────────────
-#  on_message — risponde nei thread di chat
+#  on_message — thread di chat + DM automatici
 # ──────────────────────────────────────────────
 @bot.event
 async def on_message(message: discord.Message):
@@ -675,6 +678,30 @@ async def on_message(message: discord.Message):
         return
 
     thread_data = CHAT_THREADS.get(message.channel.id)
+
+    # ── DM auto-reply ──
+    # Se non c'è sessione attiva, ma siamo in DM e non è un comando → avvia auto-conversazione
+    if (
+        not thread_data
+        and isinstance(message.channel, discord.DMChannel)
+        and not message.content.startswith("/")
+        and not message.content.startswith("!")
+    ):
+        uid        = message.author.id
+        model      = get_model(uid, "text")
+        key        = get_key(uid)
+        sys_prompt = build_system_prompt(uid, "")
+        CHAT_THREADS[message.channel.id] = {
+            "user_id": uid,
+            "model":   model,
+            "system":  sys_prompt,
+            "key":     key,
+            "has_key": has_personal_key(uid),
+            "private": True,
+            "history": [{"role": "system", "content": sys_prompt}],
+        }
+        thread_data = CHAT_THREADS[message.channel.id]
+
     if not thread_data:
         await bot.process_commands(message)
         return
@@ -709,11 +736,10 @@ async def on_message(message: discord.Message):
                     data  = await api_post_json(session, f"{BASE_URL}/chat/completions", payload, t_key)
                     reply = data["choices"][0]["message"]["content"]
                 else:
-                    # Endpoint pubblico — manda solo l'ultimo messaggio col contesto
-                    last_msg = history[-1]["content"]
+                    last_msg       = history[-1]["content"]
                     encoded_prompt = urllib.parse.quote(last_msg)
-                    sys_prompt = urllib.parse.quote(thread_data.get("system", ""))
-                    pub_url = f"https://text.pollinations.ai/{encoded_prompt}?model={thread_data['model']}&system={sys_prompt}"
+                    sys_q          = urllib.parse.quote(thread_data.get("system", ""))
+                    pub_url = f"https://text.pollinations.ai/{encoded_prompt}?model={thread_data['model']}&system={sys_q}"
                     async with session.get(pub_url) as resp:
                         resp.raise_for_status()
                         reply = await resp.text()
@@ -727,6 +753,31 @@ async def on_message(message: discord.Message):
 
         except Exception as e:
             await message.channel.send(embed=discord.Embed(title="❌ Error", description=f"`{e}`", color=0xED4245))
+
+# ──────────────────────────────────────────────
+#  View — bottone "Copy URL" sotto le immagini
+# ──────────────────────────────────────────────
+class ImageURLView(discord.ui.View):
+    """Aggiunge un link button + un copy-URL button sotto ogni immagine generata."""
+
+    def __init__(self, url: str):
+        super().__init__(timeout=600)   # bottoni attivi 10 min
+        self._url = url
+        # Link button → apre direttamente l'immagine nel browser
+        self.add_item(discord.ui.Button(
+            label="🔗 Open Image",
+            style=discord.ButtonStyle.link,
+            url=url,
+            row=0
+        ))
+
+    @discord.ui.button(label="📋 Copy URL", style=discord.ButtonStyle.secondary, row=0)
+    async def copy_url_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Invia l'URL come messaggio ephemeral — facile da selezionare e copiare."""
+        await interaction.response.send_message(
+            f"```\n{self._url}\n```",
+            ephemeral=True
+        )
 
 # ──────────────────────────────────────────────
 #  /image
@@ -771,7 +822,7 @@ async def cmd_image(interaction: discord.Interaction, prompt: str, size: str = "
         embed.set_author(name=f"🖼️ {model_name} - {size}")
         embed.set_image(url="attachment://nov.png")
         embed.set_footer(text=prompt[:100])
-        await interaction.followup.send(embed=embed, file=file)
+        await interaction.followup.send(embed=embed, file=file, view=ImageURLView(img_url))
 
     except Exception as e:
         await interaction.followup.send(embed=discord.Embed(title="❌ Error", description=f"`{e}`", color=0xED4245))
@@ -1096,16 +1147,653 @@ async def cmd_privtext(interaction: discord.Interaction, prompt: str, system: st
         )
 
 # ──────────────────────────────────────────────
+#  /ping — latency con barra colorata
+# ──────────────────────────────────────────────
+@bot.tree.command(name="ping", description="Check Nov's latency")
+async def cmd_ping(interaction: discord.Interaction):
+    t_start = time.monotonic()
+    await interaction.response.defer(thinking=True)
+    api_ms = round((time.monotonic() - t_start) * 1000)
+    ws_ms  = round(bot.latency * 1000)
+
+    def colored_bar(ms: int):
+        filled = min(10, max(1, ms // 30))
+        bar    = "█" * filled + "░" * (10 - filled)
+        if ms < 100:
+            emoji = "🟢"
+        elif ms < 200:
+            emoji = "🟡"
+        else:
+            emoji = "🔴"
+        return emoji, bar
+
+    ws_e,  ws_bar  = colored_bar(ws_ms)
+    api_e, api_bar = colored_bar(api_ms)
+
+    embed = discord.Embed(title="🏓 Pong!", color=BOT_COLOR)
+    embed.add_field(name="WebSocket", value=f"{ws_e} `{ws_bar}` **{ws_ms} ms**",  inline=False)
+    embed.add_field(name="API Round-trip", value=f"{api_e} `{api_bar}` **{api_ms} ms**", inline=False)
+    embed.set_footer(text="🟢 <100ms  🟡 100–200ms  🔴 >200ms")
+    await interaction.followup.send(embed=embed)
+
+# ──────────────────────────────────────────────
+#  /ask — risposta istantanea senza thread
+# ──────────────────────────────────────────────
+@bot.tree.command(name="ask", description="Get an instant AI reply without opening a thread")
+@app_commands.describe(prompt="Your question or request")
+async def cmd_ask(interaction: discord.Interaction, prompt: str):
+    uid        = interaction.user.id
+    model_name = USER_MODELS.get(uid, {}).get("text", DEFAULT_MODELS["text"])
+    if not is_free_model(model_name) and not has_personal_key(uid):
+        await interaction.response.send_message(embed=paid_model_no_key_embed(model_name), ephemeral=True)
+        return
+
+    await interaction.response.defer(thinking=True)
+    model      = get_model(uid, "text")
+    key        = get_key(uid)
+    sys_prompt = build_system_prompt(uid, "")
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            if has_personal_key(uid):
+                payload = {
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": sys_prompt},
+                        {"role": "user",   "content": prompt},
+                    ],
+                    "max_tokens": 1000,
+                }
+                data  = await api_post_json(session, f"{BASE_URL}/chat/completions", payload, key)
+                reply = data["choices"][0]["message"]["content"]
+            else:
+                encoded = urllib.parse.quote(prompt)
+                async with session.get(
+                    f"https://text.pollinations.ai/{encoded}?model={model}&system={urllib.parse.quote(sys_prompt)}"
+                ) as resp:
+                    resp.raise_for_status()
+                    reply = await resp.text()
+
+        embed = discord.Embed(description=reply[:4096], color=BOT_COLOR)
+        embed.set_author(name=f"💬 {model_name}")
+        embed.set_footer(text=f"Quick reply for {interaction.user.display_name} • /text for full chat")
+        await interaction.followup.send(embed=embed)
+
+    except Exception as e:
+        await interaction.followup.send(embed=discord.Embed(title="❌ Error", description=f"`{e}`", color=0xED4245))
+
+# ──────────────────────────────────────────────
+#  /translate — traduce con il modello text attivo
+# ──────────────────────────────────────────────
+@bot.tree.command(name="translate", description="Translate text into any language using the active text model")
+@app_commands.describe(text="Text to translate", language="Target language (e.g. Italian, Japanese, French)")
+async def cmd_translate(interaction: discord.Interaction, text: str, language: str):
+    uid        = interaction.user.id
+    model_name = USER_MODELS.get(uid, {}).get("text", DEFAULT_MODELS["text"])
+    if not is_free_model(model_name) and not has_personal_key(uid):
+        await interaction.response.send_message(embed=paid_model_no_key_embed(model_name), ephemeral=True)
+        return
+
+    await interaction.response.defer(thinking=True)
+    model      = get_model(uid, "text")
+    key        = get_key(uid)
+    sys_prompt = (
+        f"You are a professional translator. Translate the following text into {language}. "
+        "Output ONLY the translation — no explanations, no preamble."
+    )
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            if has_personal_key(uid):
+                payload = {
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": sys_prompt},
+                        {"role": "user",   "content": text},
+                    ],
+                    "max_tokens": 1000,
+                }
+                data   = await api_post_json(session, f"{BASE_URL}/chat/completions", payload, key)
+                result = data["choices"][0]["message"]["content"]
+            else:
+                encoded = urllib.parse.quote(text)
+                async with session.get(
+                    f"https://text.pollinations.ai/{encoded}?model={model}&system={urllib.parse.quote(sys_prompt)}"
+                ) as resp:
+                    resp.raise_for_status()
+                    result = await resp.text()
+
+        embed = discord.Embed(color=BOT_COLOR)
+        embed.set_author(name=f"🌐 Translation → {language}")
+        embed.add_field(name="🔤 Original", value=text[:1000],   inline=False)
+        embed.add_field(name=f"🌐 {language}", value=result[:1000], inline=False)
+        embed.set_footer(text=f"Model: {model_name}")
+        await interaction.followup.send(embed=embed)
+
+    except Exception as e:
+        await interaction.followup.send(embed=discord.Embed(title="❌ Error", description=f"`{e}`", color=0xED4245))
+
+# ──────────────────────────────────────────────
+#  /summarize — 4 stili di riassunto
+# ──────────────────────────────────────────────
+@bot.tree.command(name="summarize", description="Summarize text in 4 different styles")
+@app_commands.describe(text="Text to summarize", style="Summary style")
+@app_commands.choices(style=[
+    app_commands.Choice(name="• Bullet points", value="bullet"),
+    app_commands.Choice(name="📄 Paragraph",    value="paragraph"),
+    app_commands.Choice(name="1️⃣ One sentence", value="sentence"),
+    app_commands.Choice(name="📢 TL;DR",        value="tldr"),
+])
+async def cmd_summarize(interaction: discord.Interaction, text: str, style: str = "bullet"):
+    uid        = interaction.user.id
+    model_name = USER_MODELS.get(uid, {}).get("text", DEFAULT_MODELS["text"])
+    if not is_free_model(model_name) and not has_personal_key(uid):
+        await interaction.response.send_message(embed=paid_model_no_key_embed(model_name), ephemeral=True)
+        return
+
+    await interaction.response.defer(thinking=True)
+    model = get_model(uid, "text")
+    key   = get_key(uid)
+
+    STYLE_PROMPTS = {
+        "bullet":    "Summarize the following text as a concise bullet point list. Use • for each bullet.",
+        "paragraph": "Summarize the following text in a single coherent paragraph.",
+        "sentence":  "Summarize the following text in exactly one sentence. Nothing else.",
+        "tldr":      "Write a TL;DR summary of the following text. Start with 'TL;DR:'",
+    }
+    STYLE_LABELS = {
+        "bullet": "• Bullet Points", "paragraph": "📄 Paragraph",
+        "sentence": "1️⃣ One Sentence", "tldr": "📢 TL;DR",
+    }
+    sys_prompt = STYLE_PROMPTS.get(style, STYLE_PROMPTS["bullet"])
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            if has_personal_key(uid):
+                payload = {
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": sys_prompt},
+                        {"role": "user",   "content": text},
+                    ],
+                    "max_tokens": 800,
+                }
+                data   = await api_post_json(session, f"{BASE_URL}/chat/completions", payload, key)
+                result = data["choices"][0]["message"]["content"]
+            else:
+                encoded = urllib.parse.quote(text)
+                async with session.get(
+                    f"https://text.pollinations.ai/{encoded}?model={model}&system={urllib.parse.quote(sys_prompt)}"
+                ) as resp:
+                    resp.raise_for_status()
+                    result = await resp.text()
+
+        embed = discord.Embed(
+            title=f"📝 Summary — {STYLE_LABELS.get(style, style)}",
+            description=result[:4096],
+            color=BOT_COLOR
+        )
+        embed.set_footer(text=f"Model: {model_name}")
+        await interaction.followup.send(embed=embed)
+
+    except Exception as e:
+        await interaction.followup.send(embed=discord.Embed(title="❌ Error", description=f"`{e}`", color=0xED4245))
+
+# ──────────────────────────────────────────────
+#  /poll — AI genera domanda + 4 opzioni
+# ──────────────────────────────────────────────
+@bot.tree.command(name="poll", description="AI generates a poll question with 4 options and auto-adds reactions")
+@app_commands.describe(topic="Poll topic (e.g. best programming language, favorite season)")
+async def cmd_poll(interaction: discord.Interaction, topic: str):
+    uid   = interaction.user.id
+    await interaction.response.defer(thinking=True)
+    model = get_model(uid, "text")
+    key   = get_key(uid)
+    sys_prompt = (
+        "You are a poll generator. Given a topic, create a fun and engaging poll question with exactly 4 short answer options. "
+        'Respond ONLY with valid JSON — no markdown, no backticks, no extra text — in this exact format: '
+        '{"question": "...", "options": ["...", "...", "...", "..."]}'
+    )
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            if has_personal_key(uid):
+                payload = {
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": sys_prompt},
+                        {"role": "user",   "content": f"Create a poll about: {topic}"},
+                    ],
+                    "max_tokens": 300,
+                }
+                data = await api_post_json(session, f"{BASE_URL}/chat/completions", payload, key)
+                raw  = data["choices"][0]["message"]["content"]
+            else:
+                encoded = urllib.parse.quote(f"Create a poll about: {topic}")
+                async with session.get(
+                    f"https://text.pollinations.ai/{encoded}?model={model}&system={urllib.parse.quote(sys_prompt)}"
+                ) as resp:
+                    resp.raise_for_status()
+                    raw = await resp.text()
+
+        raw       = raw.strip().strip("```json").strip("```").strip()
+        poll_data = json.loads(raw)
+        question  = poll_data["question"]
+        options   = poll_data["options"][:4]
+        letters   = ["🇦", "🇧", "🇨", "🇩"]
+
+        desc = f"**{question}**\n\n"
+        for i, opt in enumerate(options):
+            desc += f"{letters[i]} {opt}\n"
+
+        embed = discord.Embed(title="📊 Poll", description=desc, color=BOT_COLOR)
+        embed.set_footer(text=f"React to vote! • Topic: {topic[:60]}")
+        msg = await interaction.followup.send(embed=embed)
+
+        for letter in letters[:len(options)]:
+            await msg.add_reaction(letter)
+
+    except Exception as e:
+        await interaction.followup.send(embed=discord.Embed(title="❌ Poll error", description=f"`{e}`", color=0xED4245))
+
+# ──────────────────────────────────────────────
+#  /roast — roast comico
+# ──────────────────────────────────────────────
+@bot.tree.command(name="roast", description="Get a harmless but spicy AI roast 🔥")
+@app_commands.describe(target="Who (or what) to roast")
+async def cmd_roast(interaction: discord.Interaction, target: str):
+    uid   = interaction.user.id
+    await interaction.response.defer(thinking=True)
+    model = get_model(uid, "text")
+    key   = get_key(uid)
+    sys_prompt = (
+        "You are a comedy roast master. Write a short, funny, and harmless roast — purely playful, "
+        "no hate speech, no slurs, no offensive content. Keep it to 3–4 sentences max. "
+        "Pure wit and humor only."
+    )
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            if has_personal_key(uid):
+                payload = {
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": sys_prompt},
+                        {"role": "user",   "content": f"Roast: {target}"},
+                    ],
+                    "max_tokens": 300,
+                }
+                data  = await api_post_json(session, f"{BASE_URL}/chat/completions", payload, key)
+                roast = data["choices"][0]["message"]["content"]
+            else:
+                encoded = urllib.parse.quote(f"Roast: {target}")
+                async with session.get(
+                    f"https://text.pollinations.ai/{encoded}?model={model}&system={urllib.parse.quote(sys_prompt)}"
+                ) as resp:
+                    resp.raise_for_status()
+                    roast = await resp.text()
+
+        embed = discord.Embed(title=f"🔥 Roasting: {target}", description=roast, color=0xFF4500)
+        embed.set_footer(text=f"Requested by {interaction.user.display_name} • all in good fun 😄")
+        await interaction.followup.send(embed=embed)
+
+    except Exception as e:
+        await interaction.followup.send(embed=discord.Embed(title="❌ Error", description=f"`{e}`", color=0xED4245))
+
+# ──────────────────────────────────────────────
+#  /batch — genera variazioni in parallelo
+# ──────────────────────────────────────────────
+@bot.tree.command(name="batch", description="Generate multiple image variations in parallel")
+@app_commands.describe(prompt="Image description", count="Number of variations (2–4)")
+@app_commands.choices(count=[
+    app_commands.Choice(name="2 images", value=2),
+    app_commands.Choice(name="3 images", value=3),
+    app_commands.Choice(name="4 images", value=4),
+])
+async def cmd_batch(interaction: discord.Interaction, prompt: str, count: int = 2):
+    uid        = interaction.user.id
+    model_name = USER_MODELS.get(uid, {}).get("image", DEFAULT_MODELS["image"])
+    if not is_free_model(model_name) and not has_personal_key(uid):
+        await interaction.response.send_message(embed=paid_model_no_key_embed(model_name), ephemeral=True)
+        return
+
+    await interaction.response.defer(thinking=True)
+    model   = get_model(uid, "image")
+    encoded = urllib.parse.quote(prompt)
+
+    def make_url(seed: int) -> str:
+        if has_personal_key(uid):
+            return (f"https://gen.pollinations.ai/image/{encoded}"
+                    f"?model={model}&width=1024&height=1024&nologo=true&seed={seed}")
+        return (f"https://image.pollinations.ai/prompt/{encoded}"
+                f"?model={model}&width=1024&height=1024&nologo=true&seed={seed}&nofeed=true")
+
+    async def fetch_one(session: aiohttp.ClientSession, url: str) -> bytes:
+        if has_personal_key(uid):
+            async with session.get(url, headers=auth_headers(get_key(uid))) as resp:
+                resp.raise_for_status()
+                return await resp.read()
+        else:
+            async with session.get(url) as resp:
+                resp.raise_for_status()
+                return await resp.read()
+
+    try:
+        seeds    = [random.randint(1, 9_999_999) for _ in range(count)]
+        urls     = [make_url(s) for s in seeds]
+        async with aiohttp.ClientSession() as session:
+            results = await asyncio.gather(*[fetch_one(session, u) for u in urls], return_exceptions=True)
+
+        good = [(i, r, urls[i]) for i, r in enumerate(results) if not isinstance(r, Exception)]
+        if not good:
+            raise Exception("All generations failed")
+
+        files = [discord.File(fp=io.BytesIO(r), filename=f"nov_batch_{i+1}.png") for i, r, _ in good]
+
+        # View con un bottone "📋 #N" per ogni immagine riuscita
+        class BatchURLView(discord.ui.View):
+            def __init__(self, image_urls: list[str]):
+                super().__init__(timeout=600)
+                self._urls = image_urls
+                for idx, u in enumerate(image_urls):
+                    self.add_item(discord.ui.Button(
+                        label=f"🔗 #{idx+1}",
+                        style=discord.ButtonStyle.link,
+                        url=u,
+                        row=0
+                    ))
+                # Un bottone "Copy All" che manda tutti gli URL in ephemeral
+                self._all = "\n".join(f"**#{i+1}** `{u}`" for i, u in enumerate(image_urls))
+
+            @discord.ui.button(label="📋 Copy All URLs", style=discord.ButtonStyle.secondary, row=1)
+            async def copy_all(self, interaction: discord.Interaction, button: discord.ui.Button):
+                await interaction.response.send_message(self._all, ephemeral=True)
+
+        good_urls = [u for _, _, u in good]
+        embed = discord.Embed(
+            title=f"🖼️ Batch — {len(good)}/{count} generated",
+            description=f"**Prompt:** {prompt[:200]}",
+            color=BOT_COLOR
+        )
+        embed.set_footer(text=f"Model: {model_name} • {count} parallel variations")
+        await interaction.followup.send(embed=embed, files=files, view=BatchURLView(good_urls))
+
+    except Exception as e:
+        await interaction.followup.send(embed=discord.Embed(title="❌ Batch error", description=f"`{e}`", color=0xED4245))
+
+# ──────────────────────────────────────────────
+#  /edit — modifica immagine con Kontext
+# ──────────────────────────────────────────────
+@bot.tree.command(name="edit", description="Edit an image with FLUX.1 Kontext (requires account)")
+@app_commands.describe(image_url="URL of the source image", prompt="What to change in the image")
+async def cmd_edit(interaction: discord.Interaction, image_url: str, prompt: str):
+    uid = interaction.user.id
+    if not has_personal_key(uid):
+        await interaction.response.send_message(embed=not_logged_in_embed(), ephemeral=True)
+        return
+
+    await interaction.response.defer(thinking=True)
+    key = get_key(uid)
+
+    try:
+        encoded_prompt = urllib.parse.quote(prompt)
+        encoded_img    = urllib.parse.quote(image_url)
+        seed           = random.randint(1, 9_999_999)
+        edit_url = (
+            f"https://gen.pollinations.ai/image/{encoded_prompt}"
+            f"?model=kontext&input_image={encoded_img}&nologo=true&seed={seed}"
+        )
+        async with aiohttp.ClientSession() as session:
+            async with session.get(edit_url, headers=auth_headers(key)) as resp:
+                resp.raise_for_status()
+                img_bytes = await resp.read()
+
+        file  = discord.File(fp=io.BytesIO(img_bytes), filename="nov_edit.png")
+        embed = discord.Embed(color=BOT_COLOR)
+        embed.set_author(name="✏️ FLUX.1 Kontext — Image Edit")
+        embed.add_field(name="Edit prompt", value=prompt[:500], inline=False)
+        embed.set_image(url="attachment://nov_edit.png")
+        embed.set_footer(text="Powered by FLUX.1 Kontext")
+        await interaction.followup.send(embed=embed, file=file, view=ImageURLView(edit_url))
+
+    except Exception as e:
+        await interaction.followup.send(embed=discord.Embed(
+            title="❌ Edit error",
+            description=f"`{e}`\n\n💡 Make sure the image URL is publicly accessible.",
+            color=0xED4245
+        ))
+
+# ──────────────────────────────────────────────
+#  /reset — chiude e archivia il thread corrente
+# ──────────────────────────────────────────────
+@bot.tree.command(name="reset", description="Close and archive this chat thread (owner only)")
+async def cmd_reset(interaction: discord.Interaction):
+    ch          = interaction.channel
+    thread_data = CHAT_THREADS.get(ch.id)
+
+    if not thread_data:
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                title="❌ Not in a Nov thread",
+                description="Use this command inside an active Nov chat thread.",
+                color=0xED4245
+            ), ephemeral=True
+        )
+        return
+
+    if thread_data["user_id"] != interaction.user.id:
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                title="🔒 Not your thread",
+                description="Only the thread owner can reset it.",
+                color=0xFEE75C
+            ), ephemeral=True
+        )
+        return
+
+    del CHAT_THREADS[ch.id]
+    await interaction.response.send_message(
+        embed=discord.Embed(title="🗑️ Thread closed", description="This chat session has been ended.", color=0x57F287)
+    )
+    if isinstance(ch, discord.Thread):
+        try:
+            await ch.edit(archived=True, locked=True)
+        except Exception:
+            pass
+
+# ──────────────────────────────────────────────
+#  /export — scarica cronologia come .txt
+# ──────────────────────────────────────────────
+@bot.tree.command(name="export", description="Download this thread's chat history as a .txt file")
+async def cmd_export(interaction: discord.Interaction):
+    ch          = interaction.channel
+    thread_data = CHAT_THREADS.get(ch.id)
+
+    if not thread_data:
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                title="❌ Not in a Nov thread",
+                description="Use this inside an active Nov chat thread.",
+                color=0xED4245
+            ), ephemeral=True
+        )
+        return
+
+    history = thread_data.get("history", [])
+    lines   = [f"Nov Chat Export — {interaction.user.display_name}\n", "=" * 50 + "\n\n"]
+    for msg in history:
+        role = msg["role"].upper()
+        if role == "SYSTEM":
+            continue
+        lines.append(f"[{role}]\n{msg['content']}\n\n")
+
+    content = "".join(lines)
+    file    = discord.File(fp=io.BytesIO(content.encode("utf-8")), filename="nov_chat_export.txt")
+    await interaction.response.send_message(
+        content="📄 Here's your chat history:", file=file, ephemeral=True
+    )
+
+# ──────────────────────────────────────────────
+#  /profile — tier, GitHub, balance Pollen
+# ──────────────────────────────────────────────
+@bot.tree.command(name="profile", description="View your Pollinations profile (requires account)")
+async def cmd_profile(interaction: discord.Interaction):
+    uid = interaction.user.id
+    if not has_personal_key(uid):
+        await interaction.response.send_message(embed=not_logged_in_embed(), ephemeral=True)
+        return
+
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    key = get_key(uid)
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{AUTH_URL}/userinfo",
+                headers={"Authorization": f"Bearer {key}"}
+            ) as resp:
+                resp.raise_for_status()
+                ui = await resp.json()
+
+        username = ui.get("preferred_username") or ui.get("name") or "Unknown"
+        github   = ui.get("github_username") or username
+        tier     = ui.get("tier") or "Free"
+        pollen   = ui.get("pollen_balance") or ui.get("balance") or "N/A"
+
+        embed = discord.Embed(title="👤 Your Pollinations Profile", color=BOT_COLOR)
+        embed.add_field(name="🐙 GitHub",   value=f"`{github}`",  inline=True)
+        embed.add_field(name="⚡ Tier",     value=f"`{tier}`",    inline=True)
+        embed.add_field(name="🌸 Pollen",   value=f"`{pollen}`",  inline=True)
+        embed.set_footer(text="enter.pollinations.ai • manage your account online")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    except Exception as e:
+        await interaction.followup.send(
+            embed=discord.Embed(title="❌ Error", description=f"`{e}`", color=0xED4245), ephemeral=True
+        )
+
+# ──────────────────────────────────────────────
+#  /privchat — thread privato senza primo messaggio
+# ──────────────────────────────────────────────
+@bot.tree.command(name="privchat", description="Open a private thread with Nov (no message needed)")
+async def cmd_privchat(interaction: discord.Interaction):
+    uid                  = interaction.user.id
+    model_name           = USER_MODELS.get(uid, {}).get("text", DEFAULT_MODELS["text"])
+    in_guild_text_channel = (
+        interaction.guild is not None and isinstance(interaction.channel, discord.TextChannel)
+    )
+
+    await interaction.response.defer(thinking=True, ephemeral=in_guild_text_channel)
+    sys_prompt = build_system_prompt(uid, "")
+
+    try:
+        if in_guild_text_channel:
+            thread = await interaction.channel.create_thread(
+                name=f"🔒 Nov · {interaction.user.display_name}",
+                type=discord.ChannelType.private_thread,
+                invitable=False,
+                auto_archive_duration=60,
+            )
+            await thread.add_user(interaction.user)
+
+            greeting = (
+                f"Hey {interaction.user.display_name}! 👋\n"
+                "This is your private space with Nov. Just type here — I'll reply to everything.\n"
+                "Use `/reset` to end the session."
+            )
+            intro = discord.Embed(description=f"🔒 **Private chat started**\n\n{greeting}", color=0x2B2D31)
+            intro.set_author(name=f"Nov Chat (Private) — {model_name}")
+            await thread.send(embed=intro)
+
+            CHAT_THREADS[thread.id] = {
+                "user_id": uid,
+                "model":   get_model(uid, "text"),
+                "system":  sys_prompt,
+                "key":     get_key(uid),
+                "has_key": has_personal_key(uid),
+                "private": True,
+                "history": [{"role": "system", "content": sys_prompt}],
+            }
+            await interaction.followup.send(f"🔒 Private thread opened! → {thread.mention}", ephemeral=True)
+
+        else:
+            # In DM è già privato — attiva semplicemente la sessione
+            greeting = (
+                f"Hey {interaction.user.display_name}! 👋\n"
+                "Private chat active. Just type here — I'll reply to everything.\n"
+                "Use `/reset` to end the session."
+            )
+            intro = discord.Embed(description=f"🔒 **Private chat started**\n\n{greeting}", color=0x2B2D31)
+            intro.set_author(name=f"Nov Chat (Private) — {model_name}")
+            await interaction.followup.send(embed=intro)
+
+            CHAT_THREADS[interaction.channel.id] = {
+                "user_id": uid,
+                "model":   get_model(uid, "text"),
+                "system":  sys_prompt,
+                "key":     get_key(uid),
+                "has_key": has_personal_key(uid),
+                "private": True,
+                "history": [{"role": "system", "content": sys_prompt}],
+            }
+
+    except discord.Forbidden:
+        await interaction.followup.send(embed=discord.Embed(
+            title="❌ Missing permissions",
+            description=(
+                "Nov can't create private threads here.\n\n"
+                "Make sure **Community** is enabled and Nov has "
+                "**Create Private Threads** permission."
+            ),
+            color=0xED4245
+        ), ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(
+            embed=discord.Embed(title="❌ Error", description=f"`{e}`", color=0xED4245), ephemeral=True
+        )
+
+# ──────────────────────────────────────────────
 #  /help
 # ──────────────────────────────────────────────
 @bot.tree.command(name="help", description="Show all Nov commands")
 async def cmd_help(interaction: discord.Interaction):
-    embed = discord.Embed(title=f"✨ Nov - Commands", description="AI-powered bot by Pollinations", color=BOT_COLOR)
-    embed.add_field(name="🔑 Setup",     value="`/connect` - Connect your Pollinations key\n`/disconnect` - Remove your key\n`/info` - View your settings", inline=False)
-    embed.add_field(name="🧠 Memory",    value="`/remember [key] [value]` - Save info about you\n`/forget` - Clear your memory", inline=False)
-    embed.add_field(name="💬 Generate",  value="`/text` - Open AI chat thread\n`/privtext` - 🔒 Private chat thread\n`/image` - Generate an image\n`/audio` - Text to speech\n`/video` - Generate a video", inline=False)
-    embed.add_field(name="⚙️ Models",    value="`/model` - Change AI model (with autocomplete!)\n`/models` - List available models", inline=False)
-    embed.set_footer(text=f"Nov v{BOT_VERSION} - works in DMs too! - enter.pollinations.ai")
+    embed = discord.Embed(title=f"✨ Nov — Commands", description="AI-powered bot by Pollinations", color=BOT_COLOR)
+    embed.add_field(name="🔑 Setup",
+        value="`/connect` · Link your Pollinations key\n`/disconnect` · Remove your key\n`/info` · View your settings\n`/profile` · Tier, GitHub & Pollen balance",
+        inline=False)
+    embed.add_field(name="🧠 Memory",
+        value="`/remember [key] [value]` · Save info about you\n`/forget` · Clear your memory",
+        inline=False)
+    embed.add_field(name="💬 Chat",
+        value=(
+            "`/text` · Open AI chat thread\n"
+            "`/privtext` · 🔒 Private chat thread (with first message)\n"
+            "`/privchat` · 🔒 Private thread (no message needed)\n"
+            "`/ask [prompt]` · Instant reply, no thread\n"
+            "`/reset` · Close & archive current thread *(owner)*\n"
+            "`/export` · Download chat history as .txt"
+        ), inline=False)
+    embed.add_field(name="🖼️ Image",
+        value=(
+            "`/image [prompt]` · Generate an image\n"
+            "`/batch [prompt] [2-4]` · Multiple variations in parallel\n"
+            "`/edit [url] [prompt]` · Edit image with Kontext *(account)*"
+        ), inline=False)
+    embed.add_field(name="🔊 Audio / 🎬 Video",
+        value="`/audio [text]` · Text to speech\n`/video [prompt]` · Generate a video *(account)*",
+        inline=False)
+    embed.add_field(name="⚙️ Models",
+        value="`/model` · Change AI model *(autocomplete!)*\n`/models` · List available models",
+        inline=False)
+    embed.add_field(name="🛠️ Utilities",
+        value=(
+            "`/ping` · Latency with colored bar\n"
+            "`/translate [text] [lang]` · Translate to any language\n"
+            "`/summarize [text] [style]` · 4 styles: bullets / paragraph / sentence / TL;DR\n"
+            "`/poll [topic]` · AI poll with auto reactions 🇦🇧🇨🇩\n"
+            "`/roast [target]` · Harmless but spicy roast 🔥"
+        ), inline=False)
+    embed.set_footer(text=f"Nov v{BOT_VERSION} · Works in DMs too! · enter.pollinations.ai")
     await interaction.response.send_message(embed=embed)
 
 # ──────────────────────────────────────────────
