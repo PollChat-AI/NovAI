@@ -1804,4 +1804,4 @@ if __name__ == "__main__":
         print("❌  DISCORD_TOKEN missing in .env!")
         exit(1)
     print(f"🚀  Starting {BOT_NAME} v{BOT_VERSION}...")
-    bot.run(DISCORD_TOKEN)
+    bot.run(DISCORD_TOKEN) 
