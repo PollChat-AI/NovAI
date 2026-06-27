@@ -37,19 +37,36 @@ AUTH_URL      = "https://enter.pollinations.ai/api/device"
 APP_KEY       = "pk_yQpEnADty90tWmr0"  # Nov App Key
 BOT_NAME      = "Nov"
 BOT_COLOR     = 0x5865F2
-BOT_VERSION   = "2.0.0"
+BOT_VERSION   = "3.0.0"
 
 # Chiavi per utente { user_id: "sk_..." }
-USER_KEYS: dict[int, str] = {}
-
+USER_KEYS:        dict[int, str]  = {}
 # Modelli per utente { user_id: { tipo: modello } }
-USER_MODELS: dict[int, dict] = {}
-
+USER_MODELS:      dict[int, dict] = {}
 # Memoria utenti { user_id: { "name": str, ... } }
-USER_MEMORY: dict[int, dict] = {}
-
+USER_MEMORY:      dict[int, dict] = {}
 # Thread di chat attivi { thread_id: { user_id, model, history } }
-CHAT_THREADS: dict[int, dict] = {}
+CHAT_THREADS:     dict[int, dict] = {}
+# Storico generazioni per utente (max 20) { uid: [{type,prompt,url,model,ts}] }
+USER_HISTORY:     dict[int, list] = {}
+# Persona attiva per utente { uid: "persona_name" }
+USER_PERSONA:     dict[int, str]  = {}
+# Canale gallery per server { guild_id: channel_id }
+GALLERY_CHANNELS: dict[int, int]  = {}
+# Statistiche server { guild_id: { uid: {images,texts,videos,audios} } }
+SERVER_STATS:     dict[int, dict] = {}
+
+# Persona presets
+PERSONAS = {
+    "default":     "Be helpful, friendly, and concise.",
+    "sarcastic":   "You are extremely sarcastic and witty. Every answer drips with irony, but you still help.",
+    "formal":      "You are a formal, professional assistant. Use proper grammar and a business-like tone at all times.",
+    "pirate":      "You speak like a pirate. Use pirate slang (arrr, matey, landlubber) naturally in every reply.",
+    "anime":       "You are an enthusiastic anime character. Use Japanese honorifics (senpai, kun, chan) and express emotions very dramatically.",
+    "hacker":      "You speak like an elite hacker. Use hacker slang, l33tspeak occasionally, and reference the matrix.",
+    "shakespeare": "You speak in the style of William Shakespeare. Use thee, thou, doth, hath, and poetic language.",
+    "chef":        "You are a passionate Italian chef who relates everything to food and cooking.",
+}
 
 DEFAULT_MODELS = {
     "text":  "GPT-5.4 Nano",
@@ -1804,4 +1821,4 @@ if __name__ == "__main__":
         print("❌  DISCORD_TOKEN missing in .env!")
         exit(1)
     print(f"🚀  Starting {BOT_NAME} v{BOT_VERSION}...")
-    bot.run(DISCORD_TOKEN) 
+    bot.run(DISCORD_TOKEN)
