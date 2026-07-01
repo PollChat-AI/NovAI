@@ -785,6 +785,7 @@
   <ul class="nav-links">
     <li><a href="#start">Start</a></li>
     <li><a href="#commands">Commands</a></li>
+    <li><a href="#providers">Providers</a></li>
     <li><a href="#models">Models</a></li>
     <li><a href="#features">Features</a></li>
     <li><a href="#faq">FAQ</a></li>
@@ -807,8 +808,8 @@
   <p class="hero-sub">Generate <span>text</span>, <span>images</span>, <span>audio</span>, and <span>video</span> — directly inside your Discord server. No API key required to get started.</p>
 
   <div class="hero-stats">
-    <span class="hero-stat">50+ models</span>
-    <span class="hero-stat">18 commands</span>
+    <span class="hero-stat">300+ models</span>
+    <span class="hero-stat">10 providers</span>
     <span class="hero-stat">Works in DMs</span>
     <span class="hero-stat">Free to use</span>
   </div>
@@ -940,20 +941,24 @@
       <div class="cmd-group-label">⚙️ Settings & Models</div>
       <div class="cmd-rows">
         <div class="cmd-card">
-          <div class="cmd-name">/model [type] [name] <span class="cmd-badge badge-account">account</span></div>
-          <div class="cmd-desc">Switch the AI model for text, image, audio, or video. Full autocomplete in Discord.</div>
+          <div class="cmd-name">/model [provider] [type] [name] <span class="cmd-badge badge-account">account</span></div>
+          <div class="cmd-desc">Switch provider and model for text, image, audio, or video. Full autocomplete in Discord — e.g. <code style="font-family:var(--mono);font-size:11px;">/model provider:llm7 type:text elixosearch</code></div>
         </div>
         <div class="cmd-card">
-          <div class="cmd-name">/models <span class="cmd-badge badge-free">free</span></div>
-          <div class="cmd-desc">List all available models. Shows free models without an account, all models with one.</div>
+          <div class="cmd-name">/models [provider] <span class="cmd-badge badge-free">free</span></div>
+          <div class="cmd-desc">List all available models for a provider. Shows free models without an account, all models with one.</div>
         </div>
         <div class="cmd-card">
           <div class="cmd-name">/info <span class="cmd-badge badge-free">free</span></div>
-          <div class="cmd-desc">View your current settings: active models, connected key, and saved memory.</div>
+          <div class="cmd-desc">View your current settings: active provider, models, connected keys, and saved memory.</div>
         </div>
         <div class="cmd-card">
-          <div class="cmd-name">/connect / /disconnect <span class="cmd-badge badge-free">free</span></div>
-          <div class="cmd-desc">Link or unlink your Pollinations account to unlock all models and your Pollen balance.</div>
+          <div class="cmd-name">/connect [provider] <span class="cmd-badge badge-free">free</span></div>
+          <div class="cmd-desc">Link any provider — e.g. <code style="font-family:var(--mono);font-size:11px;">/connect provider:claude</code>. Pollinations uses free device-flow, others open a secure key modal.</div>
+        </div>
+        <div class="cmd-card">
+          <div class="cmd-name">/disconnect [provider] <span class="cmd-badge badge-free">free</span></div>
+          <div class="cmd-desc">Unlink a provider — e.g. <code style="font-family:var(--mono);font-size:11px;">/disconnect provider:gemini</code>. Keys are removed from memory instantly.</div>
         </div>
         <div class="cmd-card">
           <div class="cmd-name">/profile <span class="cmd-badge badge-account">account</span></div>
@@ -997,11 +1002,75 @@
 
 <div class="divider"></div>
 
+<div class="divider"></div>
+
+<!-- PROVIDERS -->
+<section id="providers">
+  <div class="section-header fade-in">
+    <p class="section-label">Providers</p>
+    <p class="section-note">10 providers · Switch anytime with <code style="font-family:var(--mono);font-size:11px;background:var(--surface);border:1px solid var(--border);padding:2px 6px;border-radius:2px;">/connect provider:</code></p>
+  </div>
+  <div class="features-grid fade-in">
+    <div class="feature-card">
+      <span class="feature-icon">🌸</span>
+      <div class="feature-title">Pollinations AI</div>
+      <div class="feature-desc">Default provider. Free device-flow login, 50+ models across text/image/audio/video. No key needed.</div>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">6️⃣</span>
+      <div class="feature-title">SixFinger API</div>
+      <div class="feature-desc">OpenAI-compatible gateway with Claude, GPT-5, GLM-5, DeepSeek and more. Free tier: 200 req/month.</div>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">▲</span>
+      <div class="feature-title">Vercel AI Gateway</div>
+      <div class="feature-desc">206+ models from every major lab — Anthropic, OpenAI, Google, xAI, Mistral, DeepSeek, Alibaba and more. No key required.</div>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">💧</span>
+      <div class="feature-title">Aqua API</div>
+      <div class="feature-desc">50+ free-tier models including Claude Opus 4.8, GPT-5.5, Gemini 3.5, Grok — some require approval.</div>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">🟢</span>
+      <div class="feature-title">OpenAI</div>
+      <div class="feature-desc">Bring your own key for GPT-5.5, o3, DALL-E 3, GPT Image, Whisper, and Sora video.</div>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">🟠</span>
+      <div class="feature-title">Anthropic</div>
+      <div class="feature-desc">Bring your own key for Claude Opus 4.8, Sonnet 4.6, and Haiku 4.5.</div>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">🔵</span>
+      <div class="feature-title">Google Gemini</div>
+      <div class="feature-desc">Bring your own key for Gemini 3.5 Flash, 3.1 Pro, Imagen 4, and Veo 3.1 video.</div>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">🌐</span>
+      <div class="feature-title">LLM7</div>
+      <div class="feature-desc">Free gateway with DeepSeek, Qwen, GPT-4o mini, Claude, Mistral, and FLUX image generation. No key required.</div>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">🔴</span>
+      <div class="feature-title">Mistral AI</div>
+      <div class="feature-desc">Bring your own key for Mistral Large 3, Codestral, and Pixtral vision models.</div>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">⚫</span>
+      <div class="feature-title">xAI / Grok</div>
+      <div class="feature-desc">Bring your own key for Grok 4.3, Grok Imagine image generation, and Grok video.</div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
 <!-- MODELS -->
 <section id="models">
   <div class="section-header fade-in">
     <p class="section-label">Models</p>
-    <p class="section-note">All via Pollinations AI · <span style="color:#d4a800">Yellow</span> = Pollen credits</p>
+    <p class="section-note">🌸 Pollinations models shown · <span style="color:#d4a800">Yellow</span> = Pollen credits</p>
   </div>
   <div class="fade-in">
     <div class="model-tabs">
