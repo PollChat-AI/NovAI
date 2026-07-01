@@ -23,6 +23,12 @@ import urllib.parse
 import random
 from dotenv import load_dotenv
 
+try:
+    from e2b import AsyncSandbox
+    E2B_AVAILABLE = True
+except ImportError:
+    E2B_AVAILABLE = False
+
 load_dotenv()
 
 # ──────────────────────────────────────────────
@@ -38,6 +44,14 @@ BOT_VERSION   = "3.1.0"
 STATE_FILE    = "nov_state.json"
 
 # ──────────────────────────────────────────────
+#  E2B SANDBOX (persistent terminal per user)
+# ──────────────────────────────────────────────
+E2B_API_KEY       = os.getenv("E2B_API_KEY", "")
+SANDBOX_TIMEOUT   = 15 * 60      # secondi di inattività prima che E2B la spenga (max consentito lato loro)
+SANDBOX_MAX_HOURS = 4            # dopo quanto la forziamo a rigenerarsi comunque
+USER_SANDBOXES: dict[int, dict]  = {}   # { uid: {"id": sandbox_id, "created": ts, "cwd": "/home/user"} }
+
+# ──────────────────────────────────────────────
 #  PERSISTENCE
 # ──────────────────────────────────────────────
 def save_state():
@@ -50,6 +64,7 @@ def save_state():
         "USER_PROVIDER_KEYS": {str(k): v for k,v in USER_PROVIDER_KEYS.items()},
         "USER_TEXT_PROVIDER": {str(k): v for k,v in USER_TEXT_PROVIDER.items()},
         "USER_PROVIDER_MODELS":{str(k): v for k,v in USER_PROVIDER_MODELS.items()},
+        "USER_SANDBOXES":     {str(k): v for k,v in USER_SANDBOXES.items()},
     }
     with open(STATE_FILE, "w") as f:
         json.dump(data, f)
@@ -76,6 +91,8 @@ def load_state():
             USER_TEXT_PROVIDER[int(k)] = v
         for k, v in data.get("USER_PROVIDER_MODELS", {}).items():
             USER_PROVIDER_MODELS[int(k)] = v
+        for k, v in data.get("USER_SANDBOXES", {}).items():
+            USER_SANDBOXES[int(k)] = v
         print(f"✅  State loaded from {STATE_FILE}")
     except Exception as e:
         print(f"⚠️  Could not load state: {e}")
@@ -446,6 +463,60 @@ def get_server_name(guild_id: int | None) -> str:
     if guild_id and guild_id in SERVER_IDENTITY:
         return SERVER_IDENTITY[guild_id]["name"]
     return BOT_NAME
+
+# ──────────────────────────────────────────────
+#  HELPERS — E2B Terminal Sandbox
+# ──────────────────────────────────────────────
+async def get_sandbox(uid: int):
+    """Ritorna (sandbox, is_new) — riconnette la sandbox esistente o ne crea una nuova."""
+    info = USER_SANDBOXES.get(uid)
+    now  = time.time()
+
+    if info and (now - info["created"]) < SANDBOX_MAX_HOURS * 3600:
+        try:
+            sbx = await AsyncSandbox.connect(info["id"], api_key=E2B_API_KEY)
+            return sbx, False
+        except Exception:
+            pass  # sandbox scaduta/rimossa lato E2B → ne creiamo una nuova
+
+    sbx = await AsyncSandbox.create(api_key=E2B_API_KEY, timeout=SANDBOX_TIMEOUT)
+    USER_SANDBOXES[uid] = {"id": sbx.sandbox_id, "created": now, "cwd": "/home/user"}
+    save_state()
+    return sbx, True
+
+
+async def run_terminal_command(uid: int, command: str, timeout: int = 60):
+    """Esegue un comando shell nella sandbox persistente dell'utente. Ritorna (stdout, stderr, exit_code, cwd)."""
+    sbx, _ = await get_sandbox(uid)
+    cwd = USER_SANDBOXES[uid].get("cwd", "/home/user")
+
+    # Concatena cd + comando, poi stampa il cwd risultante per tracciare i cambi directory tra chiamate
+    wrapped = f'cd "{cwd}" 2>/dev/null; {command}; echo "__NOVCWD__:$PWD"'
+    result  = await sbx.commands.run(wrapped, timeout=timeout)
+
+    stdout = result.stdout or ""
+    stderr = result.stderr or ""
+    new_cwd = cwd
+
+    if "__NOVCWD__:" in stdout:
+        stdout, _, tail = stdout.rpartition("__NOVCWD__:")
+        tail = tail.strip().splitlines()[0] if tail.strip() else cwd
+        new_cwd = tail or cwd
+        USER_SANDBOXES[uid]["cwd"] = new_cwd
+
+    return stdout.strip(), stderr.strip(), result.exit_code, new_cwd
+
+
+def sandbox_not_configured_embed() -> discord.Embed:
+    return discord.Embed(
+        title="❌ Terminal not configured",
+        description=(
+            "The bot owner needs to set `E2B_API_KEY` in the environment.\n"
+            "Get a free key at **[e2b.dev](https://e2b.dev)** (`pip install e2b`)."
+        ),
+        color=0xED4245
+    )
+
 
 def build_system_prompt(user_id: int, custom: str, guild_id: int | None = None) -> str:
     mem = get_memory(user_id)
@@ -1812,6 +1883,105 @@ async def cmd_event(interaction: discord.Interaction, title: str, date: str, det
 
 
 # ──────────────────────────────────────────────
+#  /terminal — Persistent E2B sandbox with real shell (bash, git, python, node...)
+# ──────────────────────────────────────────────
+@bot.tree.command(name="terminal", description="Run a shell command in your persistent sandbox (bash, git, python, node...)")
+@app_commands.describe(command="Shell command to run — e.g. git clone ..., npm install, python3 script.py")
+async def cmd_terminal(interaction: discord.Interaction, command: str):
+    if not E2B_AVAILABLE:
+        await interaction.response.send_message(
+            embed=discord.Embed(title="❌ Terminal unavailable",
+                description="`e2b` package not installed. Run `pip install e2b` on the bot host.",
+                color=0xED4245), ephemeral=True)
+        return
+    if not E2B_API_KEY:
+        await interaction.response.send_message(embed=sandbox_not_configured_embed(), ephemeral=True)
+        return
+
+    await interaction.response.defer(thinking=True)
+    uid = interaction.user.id
+
+    try:
+        stdout, stderr, exit_code, cwd = await run_terminal_command(uid, command)
+    except Exception as e:
+        await interaction.followup.send(embed=discord.Embed(
+            title="❌ Sandbox error", description=f"```\n{str(e)[:1800]}\n```", color=0xED4245))
+        return
+
+    output = stdout
+    if stderr:
+        output += (f"\n\n[stderr]\n{stderr}" if output else f"[stderr]\n{stderr}")
+    if not output.strip():
+        output = "(no output)"
+
+    ok           = (exit_code == 0)
+    status_emoji = "✅" if ok else "❌"
+    color        = 0x57F287 if ok else 0xED4245
+
+    if len(output) > 3500:
+        file  = discord.File(io.BytesIO(output.encode()), filename="output.txt")
+        embed = discord.Embed(
+            title=f"{status_emoji} Terminal — exit {exit_code}",
+            description=f"`{cwd}` $ `{command[:200]}`\n\n*Output too long — see attached file.*",
+            color=color
+        )
+        await interaction.followup.send(embed=embed, file=file)
+    else:
+        embed = discord.Embed(
+            title=f"{status_emoji} Terminal — exit {exit_code}",
+            description=f"`{cwd}` $ `{command[:200]}`\n```\n{output[:3800]}\n```",
+            color=color
+        )
+        await interaction.followup.send(embed=embed)
+
+
+@bot.tree.command(name="terminal-reset", description="Kill your sandbox and start fresh")
+async def cmd_terminal_reset(interaction: discord.Interaction):
+    uid  = interaction.user.id
+    info = USER_SANDBOXES.pop(uid, None)
+    save_state()
+
+    if info and E2B_AVAILABLE and E2B_API_KEY:
+        try:
+            sbx = await AsyncSandbox.connect(info["id"], api_key=E2B_API_KEY)
+            await sbx.kill()
+        except Exception:
+            pass
+
+    await interaction.response.send_message(
+        embed=discord.Embed(
+            title="🔄 Sandbox reset",
+            description="Your next `/terminal` command will spin up a brand new environment.",
+            color=0x57F287
+        ), ephemeral=True
+    )
+
+
+@bot.tree.command(name="terminal-info", description="View your sandbox status")
+async def cmd_terminal_info(interaction: discord.Interaction):
+    uid  = interaction.user.id
+    info = USER_SANDBOXES.get(uid)
+
+    if not info:
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                title="💻 No active sandbox",
+                description="Run `/terminal` with any command to spin one up.",
+                color=BOT_COLOR
+            ), ephemeral=True
+        )
+        return
+
+    age_min = int((time.time() - info["created"]) // 60)
+    embed = discord.Embed(title="💻 Sandbox status", color=BOT_COLOR)
+    embed.add_field(name="Working directory", value=f"`{info.get('cwd', '/home/user')}`", inline=False)
+    embed.add_field(name="Age",         value=f"{age_min} min",        inline=True)
+    embed.add_field(name="Sandbox ID",  value=f"`{info['id'][:16]}…`", inline=True)
+    embed.set_footer(text="Idles out after 15 min of inactivity • /terminal-reset for a clean slate")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# ──────────────────────────────────────────────
 #  /help
 # ──────────────────────────────────────────────
 @bot.tree.command(name="help", description="Show all Nov commands")
@@ -1845,6 +2015,10 @@ async def cmd_help(interaction: discord.Interaction):
         value=("`/ping` · Latency · `/translate` · `/summarize` · `/poll` · `/roast` · `/matrix` · `/event`"), inline=False)
     embed.add_field(name="🎭 Server Identity",
         value="`/globalidentity` · Custom name & persona\n`/resetidentity` · Revert to default", inline=False)
+    embed.add_field(name="💻 Terminal",
+        value=("`/terminal [command]` · Run shell commands in your persistent sandbox — git, python, node, bash…\n"
+               "`/terminal-info` · View sandbox status & working directory\n"
+               "`/terminal-reset` · Kill sandbox and start fresh"), inline=False)
     embed.set_footer(text=f"Nov v{BOT_VERSION} · Works in DMs too! · Multi-Provider")
     await interaction.response.send_message(embed=embed)
 
