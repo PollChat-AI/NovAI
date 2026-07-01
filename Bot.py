@@ -115,10 +115,19 @@ PROVIDERS = {
 
 PROVIDER_MODELS = {
     "sixfinger": {
-        # Fonte: https://api.sixfinger.live/docs#models (catalogo ufficiale)
-        "text": ["llama-8b-instant","allam-2-7b","deepseek-v4-flash","claude-sonnet-4-6",
-                 "gpt-5","gpt-5.4","gpt-5.5","glm-5","kimi-k2.7-code","deepseek-v3.2",
-                 "lfm-2.5-1.2b-thinking","qwen3-32b","llama-70b","gpt-oss-120b"],
+        # Fonte: catalogo live api.sixfinger.live (Free + Starter + Plus plan, screenshot 07/2026)
+        "text": [
+            "llama-8b-instant","allam-2-7b","gpt4-nano","qwen3-32b","llama-70b",
+            "llama-scout-17b","llama-pg2-86m","gpt-oss-20b","gpt-oss-120b",
+            "step-3.5-flash","nemotron-3-super-120b-a12b","glm-4.5-air","qwen3-coder",
+            "lfm-2.5-1.2b-thinking","glm-46","deepseek-v4-flash-free","mimo-v2.5-free",
+            "north-mini-code-free","nemotron-3-ultra-free","deepseek-v4-flash",
+            "claude-sonnet-4-6","claude-haiku-4-5","claude-sonnet-4-5","claude-sonnet-4",
+            "claude-fable-5","claude-opus-4-8","claude-opus-4-7","claude-opus-4-5",
+            "claude-opus-4-1","claude-opus-4","claude-opus-4-8-fast","claude-opus-4-7-fast",
+            "claude-opus-4-6-fast","gpt-5","gpt-5.4","gpt-5.5","glm-5",
+            "kimi-k2.7-code","deepseek-v3.2",
+        ],
     },
     "openai": {
         "text":  ["gpt-5.5","gpt-5.4","gpt-5.4-mini","gpt-5.4-nano","gpt-5.3","gpt-5.3-instant",
@@ -253,7 +262,7 @@ PROVIDER_MODELS = {
 }
 
 DEFAULT_PROVIDER_MODELS = {
-    "sixfinger": {"text": "gpt-5.4"},          # verificato in api.sixfinger.live/docs
+    "sixfinger": {"text": "claude-sonnet-4-6"},  # verificato nel Free plan live
     "vercel":    {"text": "openai/gpt-5.4-nano"},   # creator/model format — verificato via Gratisfy
     "aqua":      {"text": "gpt-5.4-nano"},          # verificato via Gratisfy (nessun prefisso)
     "openai":    {"text": "gpt-4o-mini",       "image": "dall-e-3",               "audio": "tts-1"},
