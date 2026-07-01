@@ -103,6 +103,8 @@ USER_PROVIDER_MODELS: dict[int, dict[str, dict]] = {}
 PROVIDERS = {
     "pollinations": {"name": "Pollinations AI", "emoji": "🌸", "url": BASE_URL,                                           "needs_key": False},
     "sixfinger":    {"name": "SixFinger API",    "emoji": "6️⃣", "url": "https://api.sixfinger.live/v1",                   "needs_key": True},
+    "vercel":       {"name": "Vercel AI Gateway","emoji": "▲",  "url": "https://ai-gateway.vercel.sh/v1",                 "needs_key": True,  "dynamic_models": True},
+    "aqua":         {"name": "Aqua API",         "emoji": "💧", "url": "https://api.aquadevs.com/v1",                     "needs_key": True,  "dynamic_models": True},
     "openai":       {"name": "OpenAI",           "emoji": "🟢", "url": "https://api.openai.com/v1",                       "needs_key": True},
     "anthropic":    {"name": "Anthropic",         "emoji": "🟠", "url": "https://api.anthropic.com",                      "needs_key": True},
     "gemini":       {"name": "Google Gemini",     "emoji": "🔵", "url": "https://generativelanguage.googleapis.com/v1beta","needs_key": True},
@@ -169,6 +171,8 @@ PROVIDER_MODELS = {
 
 DEFAULT_PROVIDER_MODELS = {
     "sixfinger": {"text": "claude-sonnet-4-6"},
+    "vercel":    {"text": "openai/gpt-5.5"},   # creator/model format — verified via Vercel docs
+    "aqua":      {"text": ""},                 # picked live via /model after /models fetch — no verified default
     "openai":    {"text": "gpt-4o-mini",       "image": "dall-e-3",               "audio": "tts-1"},
     "anthropic": {"text": "claude-sonnet-4-6"},
     "gemini":    {"text": "gemini-2.5-flash",  "image": "imagen-4",               "video": "veo-3.1-generate-001"},
@@ -179,7 +183,9 @@ DEFAULT_PROVIDER_MODELS = {
 
 PROVIDER_CHOICES = [
     app_commands.Choice(name="🌸 Pollinations AI",       value="pollinations"),
-    app_commands.Choice(name="6️⃣ SixFinger (free Claude)", value="sixfinger"),
+    app_commands.Choice(name="6️⃣ SixFinger", value="sixfinger"),
+    app_commands.Choice(name="▲ Vercel AI Gateway",      value="vercel"),
+    app_commands.Choice(name="💧 Aqua API",              value="aqua"),
     app_commands.Choice(name="🟢 OpenAI",                value="openai"),
     app_commands.Choice(name="🟠 Anthropic (Claude)",    value="anthropic"),
     app_commands.Choice(name="🔵 Google Gemini",         value="gemini"),
@@ -500,8 +506,8 @@ async def route_text(session, uid: int, messages: list, system: str = "", max_to
                 resp.raise_for_status()
                 return await resp.text(), model_name
 
-    # ── OpenAI-compatible (openai / llm7 / mistral / xai / sixfinger) ──
-    if provider in ("openai", "llm7", "mistral", "xai", "sixfinger"):
+    # ── OpenAI-compatible (openai / llm7 / mistral / xai / sixfinger / vercel / aqua) ──
+    if provider in ("openai", "llm7", "mistral", "xai", "sixfinger", "vercel", "aqua"):
         api_key  = get_provider_key(uid, provider)
         model    = get_provider_model(uid, provider, "text")
         base_url = PROVIDERS[provider]["url"]
@@ -713,6 +719,19 @@ async def provider_model_autocomplete(interaction: discord.Interaction, current:
     if provider == "pollinations":
         uid  = interaction.user.id
         pool = available_models(tipo, uid) if tipo in KNOWN_MODELS else [m for t in KNOWN_MODELS for m in available_models(t, uid)]
+    elif PROVIDERS.get(provider, {}).get("dynamic_models") and tipo == "text":
+        uid     = interaction.user.id
+        p       = PROVIDERS[provider]
+        api_key = get_provider_key(uid, provider)
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{p['url']}/models", headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                    resp.raise_for_status()
+                    data = await resp.json()
+            pool = [m.get("id","") for m in data.get("data", [])]
+        except Exception:
+            pool = []
     else:
         pool = PROVIDER_MODELS.get(provider, {}).get(tipo, [])
     return [app_commands.Choice(name=m, value=m) for m in pool if current.lower() in m.lower()][:25]
@@ -1147,6 +1166,41 @@ async def cmd_models(interaction: discord.Interaction, provider: str):
         await interaction.response.send_message(embed=embed, ephemeral=True)
     else:
         p = PROVIDERS[provider]
+        if p.get("dynamic_models"):
+            api_key = get_provider_key(uid, provider)
+            headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f"{p['url']}/models", headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                        resp.raise_for_status()
+                        data = await resp.json()
+                model_ids = [m.get("id","?") for m in data.get("data", [])]
+                if not model_ids:
+                    await interaction.response.send_message(embed=discord.Embed(title=f"📭 No models returned by {p['name']}", color=BOT_COLOR), ephemeral=True)
+                    return
+                embed = discord.Embed(
+                    title=f"📋 {p['emoji']} {p['name']} — {len(model_ids)} Models (live)",
+                    description=f"Fetched live from `{p['url']}/models`",
+                    color=BOT_COLOR
+                )
+                chunk_str, chunk_num = "", 1
+                for m in sorted(model_ids):
+                    line = f"`{m}`\n"
+                    if len(chunk_str) + len(line) > 1000:
+                        embed.add_field(name=f"Models ({chunk_num})", value=chunk_str.strip(), inline=False)
+                        chunk_str = line; chunk_num += 1
+                    else:
+                        chunk_str += line
+                if chunk_str:
+                    embed.add_field(name=f"Models ({chunk_num})" if chunk_num > 1 else "Models", value=chunk_str.strip(), inline=False)
+                embed.set_footer(text=f"/model provider:{provider} type:text [name] to select")
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+            except Exception as e:
+                await interaction.response.send_message(
+                    embed=discord.Embed(title=f"❌ Couldn't fetch {p['name']} models", description=f"`{e}`\n\nConnect first with `/connect provider:{provider}` if the endpoint requires a key.", color=0xED4245),
+                    ephemeral=True
+                )
+            return
         embed = discord.Embed(title=f"📋 {p['emoji']} {p['name']} — Models", color=BOT_COLOR)
         for t, models in PROVIDER_MODELS.get(provider, {}).items():
             embed.add_field(name=f"{TYPE_EMOJI.get(t,t)} {t.capitalize()}", value="\n".join(f"`{m}`" for m in models) or "*none*", inline=False)
